@@ -17,120 +17,102 @@ jobs:
       with:
         python-version: '3.10'
 
-    - name: 3. Install epubhv (最原始成功的開源大腦)
+    - name: 3. Core Processing (Text to Vertical & Original Image Replacement)
       run: |
-        python -m pip install --upgrade pip
-        pip install epubhv
-
-    - name: 4. Core Processing (套件完美轉直排 -> 疊加成功換封面與防變形)
-      run: |
-        # 【積木一：成功直排程式碼】原封不動，優先確保標點引號完全正確
-        for f in books/*.epub; do
-          if [[ "$f" != *"-vertical.epub" ]]; then
-            echo "正在以最初完美引號模式進行直排編碼: $f"
-            epubhv "$f"
-          fi
-        done
-
-        # 【積木二：成功換書封程式碼】原封不動，在轉檔成品上執行結構攔截與防變形注入
         python -c "
         import os, zipfile, re, shutil
         
-        cover_file = None
-        v_epub = None
+        # 1. 尋找使用者在 books 資料夾上傳的原始圖片與電子書
+        user_image = None
+        user_epub = None
         for f in os.listdir('books'):
             if f.lower().endswith(('.jpg', '.jpeg', '.png')):
-                cover_file = os.path.join('books', f)
-            elif f.lower().endswith('-vertical.epub'):
-                v_epub = os.path.join('books', f)
+                user_image = os.path.join('books', f)
+            elif f.lower().endswith('.epub'):
+                user_epub = os.path.join('books', f)
                 
-        if cover_file and v_epub:
-            print(f'開始從直排 EPUB 核心結構中尋找真實封面路徑...')
-            temp_zip = 'temp_extract'
-            if os.path.exists(temp_zip): shutil.rmtree(temp_zip)
+        if not user_epub:
+            print('❌ 未在 books 資料夾中找到待轉檔的橫排 .epub 檔案！')
+            exit(0)
             
-            with zipfile.ZipFile(v_epub, 'r') as z:
-                z.extractall(temp_zip)
+        print(f'📖 目標電子書: {user_epub}')
+        
+        # 2. 解壓縮電子書到臨時工作區
+        temp_dir = 'epub_workspace'
+        if os.path.exists(temp_dir): shutil.rmtree(temp_dir)
+        with zipfile.ZipFile(user_epub, 'r') as z:
+            z.extractall(temp_dir)
             
-            # 第一步：讀取 .opf 尋找實際封面的圖片路徑與 HTML 封面網頁路徑
-            opf_path = None
-            cover_img_rel_path = None
-            cover_html_rel_path = None
+        # 3. 處理文字與翻頁方向（原封不動保留原書的所有標點符號，絕不替換字元，防止引號躺平）
+        for root, dirs, files in os.walk(temp_dir):
+            for file in files:
+                # 修改翻頁方向為由右至左 (RTL)
+                if file.endswith('.opf'):
+                    p = os.path.join(root, file)
+                    with open(p, 'r', encoding='utf-8', errors='ignore') as f: content = f.read()
+                    if 'page-progression-direction' not in content:
+                        content = re.sub(r'<spine([^>]*)>', r'<spine\1 page-progression-direction=\"rtl\">', content)
+                        with open(p, 'w', encoding='utf-8') as f: f.write(content)
+                
+                # 注入最純粹成功的直排樣式，讓閱讀器自動把原書標點（單引號）轉正
+                if file.lower().endswith('.css'):
+                    p = os.path.join(root, file)
+                    with open(p, 'a', encoding='utf-8') as f:
+                        f.write('\n\nhtml {\n  writing-mode: vertical-rl;\n  -webkit-writing-mode: vertical-rl;\n  -epub-writing-mode: vertical-rl;\n}\n')
+
+        # 4. 【核心封面控制】地毯式無損掉包封面（無損覆蓋圖片，並注入防變形控制網頁）
+        if user_image:
+            print(f'🖼️ 偵測到新封面 {user_image}，開始執行不更動原圖的原寸覆蓋程序...')
             
-            for root, dirs, files in os.walk(temp_zip):
+            # 第一步：不管舊圖片叫什麼名字，只要有封面關鍵字，一律二進位強行原位置、原檔名替換
+            for root, dirs, files in os.walk(temp_dir):
                 for file in files:
-                    if file.endswith('.opf'):
-                        opf_path = os.path.join(root, file)
-                        break
-            
-            if opf_path:
-                opf_dir = os.path.dirname(opf_path)
-                with open(opf_path, 'r', encoding='utf-8', errors='ignore') as f_opf:
-                    opf_content = f_opf.read()
-                
-                # 透過多種常見標籤特徵精準搜尋封面圖片 ID
-                img_id = None
-                img_id_match = re.search(r'<meta[^>]*name=\"cover\"[^>]*content=\"([^\"]+)\"', opf_content)
-                if img_id_match:
-                    img_id = img_id_match.group(1)
-                
-                # 遍歷尋找圖片與 HTML 檔路徑
-                manifest_items = re.findall(r'<item[^>]*/>|<item[^>]*></item>', opf_content)
-                for item in re.findall(r'<item\s+([^>]+)>', opf_content):
-                    attrs = dict(re.findall(r'(\w+)=\"([^\"]+)\"', item))
-                    href = attrs.get('href')
-                    media_type = attrs.get('media-type', '')
-                    item_id = attrs.get('id', '')
-                    properties = attrs.get('properties', '')
+                    f_lower = file.lower()
+                    if f_lower.endswith(('.jpg', '.jpeg', '.png')):
+                        if any(k in f_lower for k in ['cover', 'bookcover', 'front', 'bg', 'thumb', 'jacket', '00001', 'page001']):
+                            target_img_path = os.path.join(root, file)
+                            shutil.copy2(user_image, target_img_path)
+                            print(f'➡️ 已強行全域無損覆蓋舊封面檔案: {file}')
+
+            # 第二步：為原書的封面 HTML 網頁注入「不拉伸變形」的滿版 CSS 控制碼
+            for root, dirs, files in os.walk(temp_dir):
+                for file in files:
+                    if file.lower().endswith(('.html', '.xhtml', '.htm')):
+                        html_path = os.path.join(root, file)
+                        with open(html_path, 'r', encoding='utf-8', errors='ignore') as f_h:
+                            h_content = f_h.read()
+                        
+                        if 'cover' in file.lower() or '<svg' in h_content or 'cover' in h_content.lower():
+                            h_content = h_content.replace('preserveAspectRatio=\"xMidYMid meet\"', 'preserveAspectRatio=\"none\"')
+                            h_content = h_content.replace('preserveAspectRatio=\"xMidYMid\"', 'preserveAspectRatio=\"none\"')
+                            
+                            if '</head>' in h_content:
+                                fix_style = '<style>html, body { margin:0 !important; padding:0 !important; width:100% !important; height:100% !important; overflow:hidden; } svg { width:100% !important; height:100% !important; object-fit: fill !important; } img { width:100% !important; height:100% !important; object-fit: fill !important; max-width:100% !important; }</style></head>'
+                                h_content = h_content.replace('</head>', fix_style)
+                            
+                            with open(html_path, 'w', encoding='utf-8') as f_h_w:
+                                f_h_w.write(h_content)
+                            print(f'🔧 已成功為封面網頁注入防變形控制鎖: {file}')
+
+        # 5. 重新封裝回標準 EPUB
+        base_name, _ = os.path.splitext(os.path.basename(user_epub))
+        output_epub = os.path.join('books', f'{base_name}_[直排].epub')
+        
+        with zipfile.ZipFile(output_epub, 'w', zipfile.ZIP_DEFLATED) as z_out:
+            m_path = os.path.join(temp_dir, 'mimetype')
+            if os.path.exists(m_path):
+                z_out.write(m_path, 'mimetype', compress_type=zipfile.ZIP_STORED)
+            for root, dirs, files in os.walk(temp_dir):
+                for file in files:
+                    fp = os.path.join(root, file)
+                    an = os.path.relpath(fp, temp_dir)
+                    if an != 'mimetype': z_out.write(fp, an)
                     
-                    # 判定為封面圖片
-                    if item_id == img_id or 'cover-image' in properties or (not img_id and 'cover' in item_id.lower() and 'image' in media_type):
-                        cover_img_rel_path = os.path.normpath(os.path.join(opf_dir, href))
-                    # 判定為封面 HTML 網頁
-                    if 'html' in media_type and ('cover' in item_id.lower() or 'cover' in href.lower()):
-                        cover_html_rel_path = os.path.normpath(os.path.join(opf_dir, href))
-
-            # 第二步：如果找到了圖片路徑，直接進行覆蓋
-            if cover_img_rel_path and os.path.exists(cover_img_rel_path):
-                shutil.copy2(cover_file, cover_img_rel_path)
-                print(f'已精準替換封面圖片：{cover_img_rel_path}')
-            else:
-                # 備用方案：如果結構沒寫，全域強制覆蓋第一個找到的封面圖片
-                for root, dirs, files in os.walk(temp_zip):
-                    for file in files:
-                        if 'cover' in file.lower() and file.lower().endswith(('.jpg', '.jpeg', '.png')):
-                            shutil.copy2(cover_file, os.path.join(root, file))
-                            print(f'已全域替換封面圖片：{file}')
-
-            # 第三步：注入封面 HTML 防變形控制樣式
-            if cover_html_rel_path and os.path.exists(cover_html_rel_path):
-                with open(cover_html_rel_path, 'r', encoding='utf-8', errors='ignore') as f_in:
-                    h_content = f_in.read()
-                h_content = h_content.replace('preserveAspectRatio=\"xMidYMid meet\"', 'preserveAspectRatio=\"none\"')
-                h_content = h_content.replace('preserveAspectRatio=\"xMidYMid\"', 'preserveAspectRatio=\"none\"')
-                if '</head>' in h_content:
-                    fix_css = '<style>html, body { margin:0; padding:0; width:100%; height:100%; } svg { width:100%; height:100%; object-fit: fill; } img { width:100% !important; height:100% !important; object-fit: fill; }</style></head>'
-                    h_content = h_content.replace('</head>', fix_css)
-                with open(cover_html_rel_path, 'w', encoding='utf-8') as f_out:
-                    f_out.write(h_content)
-                print(f'已完成封面 HTML 防變形注入：{cover_html_rel_path}')
-
-            # 第四步：重新打包回高相容性 EPUB
-            os.remove(v_epub)
-            with zipfile.ZipFile(v_epub, 'w', zipfile.ZIP_DEFLATED) as z_out:
-                m_path = os.path.join(temp_zip, 'mimetype')
-                if os.path.exists(m_path):
-                    z_out.write(m_path, 'mimetype', compress_type=zipfile.ZIP_STORED)
-                for root, dirs, files in os.walk(temp_zip):
-                    for file in files:
-                        fp = os.path.join(root, file)
-                        an = os.path.relpath(fp, temp_zip)
-                        if an != 'mimetype': z_out.write(fp, an)
-            shutil.rmtree(temp_zip)
-            print('🎉 防變形與結構封面替換完成！')
+        shutil.rmtree(temp_dir)
+        print('🎉 純文字直排與封面原圖替換無損封裝成功！')
         "
 
-    - name: 5. Upload Result (萬能搜刮下載路徑)
+    - name: 4. Upload Result (萬能搜刮下載路徑)
       uses: actions/upload-artifact@v4
       with:
         name: my-vertical-books
