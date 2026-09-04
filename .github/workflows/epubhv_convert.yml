@@ -35,5 +35,5 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: my-vertical-books
-        path: books/*_v.epub
+        path: books/*-vertical.epub
 
