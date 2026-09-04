@@ -3,7 +3,7 @@ name: EPUBHV Cloud Converter
 on:
   push:
     paths:
-      - 'books/**.epub'
+      - 'books/**'
 
 jobs:
   convert-to-vertical:
@@ -17,20 +17,86 @@ jobs:
       with:
         python-version: '3.10'
 
-    - name: 3. Install epubhv
+    - name: 3. Install Tool
       run: |
         python -m pip install --upgrade pip
         pip install epubhv
 
-    - name: 4. Transform to Vertical
+    - name: 4. Transform and Cover Replace
       run: |
-        for f in books/*.epub; do
-          if [[ "$f" != *"_v.epub" ]]; then
-            echo "Converting: $f"
-            epubhv "$f"
-          fi
-        done
-
+        python -c "
+        import os, zipfile, re, shutil
+        
+        # 尋找使用者上傳的封面圖片與 EPUB
+        cover_file = None
+        epub_file = None
+        for f in os.listdir('books'):
+            if f.lower().endswith(('.jpg', '.jpeg', '.png')):
+                cover_file = os.path.join('books', f)
+            elif f.lower().endswith('.epub') and not f.endswith('-vertical.epub'):
+                epub_file = os.path.join('books', f)
+                
+        if epub_file:
+            print(f'正在進行直排轉換: {epub_file}')
+            os.system(f'epubhv \"{epub_file}\"')
+            
+            # 取得轉好直排的檔名
+            base, ext = os.path.splitext(epub_file)
+            v_epub = base + '-vertical' + ext
+            
+            # 如果有新封面，執行替換並修正變形 Bug
+            if cover_file and os.path.exists(v_epub):
+                print(f'偵測到新封面 {cover_file}，開始注入並修正變形限制...')
+                temp_zip = 'temp_extract'
+                if os.path.exists(temp_zip): shutil.rmtree(temp_zip)
+                
+                with zipfile.ZipFile(v_epub, 'r') as z:
+                    z.extractall(temp_zip)
+                
+                # 遍歷尋找原書的封面圖片進行強行替換
+                img_ext = os.path.splitext(cover_file)[1].lower()
+                for root, dirs, files in os.walk(temp_zip):
+                    for file in files:
+                        if 'cover' in file.lower() and file.lower().endswith(('.jpg', '.jpeg', '.png')):
+                            target_img_path = os.path.join(root, file)
+                            shutil.copy1(cover_file, target_img_path)
+                            print(f'已替換原封面圖片: {file}')
+                
+                # 核心修正：尋找封面 HTML 檔，注入防變形不拉伸的滿版指令
+                for root, dirs, files in os.walk(temp_zip):
+                    for file in files:
+                        if 'cover' in file.lower() and file.lower().endswith(('.html', '.xhtml', '.htm')):
+                            html_path = os.path.join(root, file)
+                            with open(html_path, 'r', encoding='utf-8', errors='ignore') as f_in:
+                                h_content = f_in.read()
+                            
+                            # 1. 修正 SVG 滿版不變形設定
+                            h_content = h_content.replace('preserveAspectRatio=\"xMidYMid meet\"', 'preserveAspectRatio=\"none\"')
+                            h_content = h_content.replace('preserveAspectRatio=\"xMidYMid\"', 'preserveAspectRatio=\"none\"')
+                            
+                            # 2. 強制注入網頁 CSS 鎖定高寬 100% 撐滿螢幕
+                            if '</head>' in h_content:
+                                fix_css = '<style>html, body { margin:0; padding:0; width:100%; height:100%; } svg { width:100%; height:100%; object-fit: fill; } img { max-width:100%; height:auto; }</style></head>'
+                                h_content = h_content.replace('</head>', fix_css)
+                                
+                            with open(html_path, 'w', encoding='utf-8') as f_out:
+                                f_out.write(h_content)
+                            print(f'已完成休眠與首頁書封防變形邏輯注入: {file}')
+                
+                # 重新遵循高相容性標準封裝 EPUB
+                os.remove(v_epub)
+                with zipfile.ZipFile(v_epub, 'w', zipfile.ZIP_DEFLATED) as z_out:
+                    m_path = os.path.join(temp_zip, 'mimetype')
+                    if os.path.exists(m_path):
+                        z_out.write(m_path, 'mimetype', compress_type=zipfile.ZIP_STORED)
+                    for root, dirs, files in os.walk(temp_zip):
+                        for file in files:
+                            fp = os.path.join(root, file)
+                            an = os.path.relpath(fp, temp_zip)
+                            if an != 'mimetype': z_out.write(fp, an)
+                shutil.rmtree(temp_zip)
+                print('🎉 防變形封面 EPUB 重新打包完成！')
+        "
 
     - name: 5. Upload Result
       uses: actions/upload-artifact@v4
@@ -40,4 +106,3 @@ jobs:
           books/*
           *.epub
           *.EPUB
-
