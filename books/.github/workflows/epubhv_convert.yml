@@ -3,7 +3,7 @@ name: EPUBHV Cloud Converter
 on:
   push:
     paths:
-      - 'books/**.epub'
+      - 'books/**'
 
 jobs:
   convert-to-vertical:
@@ -17,23 +17,83 @@ jobs:
       with:
         python-version: '3.10'
 
-    - name: 3. Install epubhv
+    - name: 3. Core Processing (Pure Vertical Layout & Original Image Replacement)
       run: |
-        python -m pip install --upgrade pip
-        pip install epubhv
+        python -c "
+        import os, zipfile, re, shutil
+        
+        # 1. 尋找使用者在 books 資料夾上傳的原始圖片與電子書
+        user_image = None
+        user_epub = None
+        for f in os.listdir('books'):
+            if f.lower().endswith(('.jpg', '.jpeg', '.png')):
+                user_image = os.path.join('books', f)
+            elif f.lower().endswith('.epub'):
+                user_epub = os.path.join('books', f)
+                
+        if not user_epub:
+            print('❌ 未在 books 資料夾中找到待轉檔的橫排 .epub 檔案！')
+            exit(0)
+            
+        print(f'📖 目標電子書: {user_epub}')
+        
+        # 2. 解壓縮電子書到臨時工作區
+        temp_dir = 'epub_workspace'
+        if os.path.exists(temp_dir): shutil.rmtree(temp_dir)
+        with zipfile.ZipFile(user_epub, 'r') as z:
+            z.extractall(temp_dir)
+            
+        # 3. 處理翻頁與 CSS 直排設定（完全不變更或替換任何標點符號字元）
+        for root, dirs, files in os.walk(temp_dir):
+            for file in files:
+                # 修改翻頁方向為由右至左 (RTL)
+                if file.endswith('.opf'):
+                    p = os.path.join(root, file)
+                    with open(p, 'r', encoding='utf-8', errors='ignore') as f: content = f.read()
+                    if 'page-progression-direction' not in content:
+                        content = re.sub(r'<spine([^>]*)>', r'<spine\1 page-progression-direction=\"rtl\">', content)
+                        with open(p, 'w', encoding='utf-8') as f: f.write(content)
+                
+                # 注入直排控制樣式，讓閱讀器內核自動將書中原有的標點符號轉向
+                if file.lower().endswith('.css'):
+                    p = os.path.join(root, file)
+                    with open(p, 'a', encoding='utf-8') as f:
+                        f.write('\n\nhtml {\n  writing-mode: vertical-rl;\n  -webkit-writing-mode: vertical-rl;\n  -epub-writing-mode: vertical-rl;\n}\n')
 
-    - name: 4. Transform to Vertical
-      run: |
-        for f in books/*.epub; do
-          if [[ "$f" != *"_v.epub" ]]; then
-            echo "Converting: $f"
-            epubhv "$f"
-          fi
-        done
+        # 4. 【核心控制】如果使用者有給新圖片，採取「0位元變更、二進位原圖強行替代」
+        if user_image:
+            print(f'🖼️ 偵測到使用者上傳了新封面圖片: {user_image}，開始執行不更動原圖的覆蓋程序...')
+            for root, dirs, files in os.walk(temp_dir):
+                for file in files:
+                    f_lower = file.lower()
+                    if f_lower.endswith(('.jpg', '.jpeg', '.png')):
+                        if any(k in f_lower for k in ['cover', 'bookcover', 'front', 'bg', 'thumb']):
+                            target_img_path = os.path.join(root, file)
+                            shutil.copy2(user_image, target_img_path)
+                            print(f'➡️ 已用您的原圖（無損變更）強行覆蓋封面圖層: {file}')
 
-    - name: 5. Upload Result
+        # 5. 重新封裝回高相容性標準 EPUB
+        base_name, _ = os.path.splitext(os.path.basename(user_epub))
+        output_epub = os.path.join('books', f'{base_name}_[直排].epub')
+        
+        with zipfile.ZipFile(output_epub, 'w', zipfile.ZIP_DEFLATED) as z_out:
+            m_path = os.path.join(temp_dir, 'mimetype')
+            if os.path.exists(m_path):
+                z_out.write(m_path, 'mimetype', compress_type=zipfile.ZIP_STORED)
+            for root, dirs, files in os.walk(temp_dir):
+                for file in files:
+                    fp = os.path.join(root, file)
+                    an = os.path.relpath(fp, temp_dir)
+                    if an != 'mimetype': z_out.write(fp, an)
+                    
+        shutil.rmtree(temp_dir)
+        print('🎉 純文字直排排版與原圖封面替換無損封裝成功！')
+        "
+
+    - name: 4. Upload Result
       uses: actions/upload-artifact@v4
       with:
         name: my-vertical-books
-        path: books/*_v.epub
-        
+        path: |
+          books/*
+          *.epub
