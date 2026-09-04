@@ -22,38 +22,30 @@ jobs:
         python -m pip install --upgrade pip
         pip install epubhv
 
-    - name: 4. Core Processing (套件轉直排 + 0位元無損封面替換)
+    - name: 4. Core Processing (先無損換書封 -> 再用套件轉直排)
       run: |
-        for f in books/*.epub; do
-          if [[ "$f" != *"-vertical.epub" ]]; then
-            echo "正在以最初完美引號模式轉換: $f"
-            # 呼叫您最當初成功的轉直排核心，產出檔名為 -vertical.epub 的檔案
-            epubhv "$f"
-          fi
-        done
-
-        # 核心無損封面置入：完全不碰文字與圖片像素，純粹二進位覆蓋
+        # 1. 呼叫 Python：在轉直排之前，先進行 0 位元變更的原圖封面無損覆蓋
         python -c "
         import os, zipfile, shutil
         
-        # 尋找使用者上傳的新封面圖片與轉好的直排書
+        # 尋找使用者上傳的新封面圖片與原始橫排書
         user_image = None
-        v_epub = None
+        target_epub = None
         for f in os.listdir('books'):
             if f.lower().endswith(('.jpg', '.jpeg', '.png')):
                 user_image = os.path.join('books', f)
-            elif f.lower().endswith('-vertical.epub'):
-                v_epub = os.path.join('books', f)
+            elif f.lower().endswith('.epub') and not f.endswith('-vertical.epub'):
+                target_epub = os.path.join('books', f)
                 
-        if user_image and v_epub:
-            print(f'🖼️ 偵測到新封面 {user_image}，開始執行不變更原圖的原寸覆蓋...')
+        if user_image and target_epub:
+            print(f'🖼️ 偵測到新封面 {user_image}，開始對原始橫排書執行原寸無損覆蓋...')
             temp_dir = 'epub_workspace'
             if os.path.exists(temp_dir): shutil.rmtree(temp_dir)
             
-            with zipfile.ZipFile(v_epub, 'r') as z:
+            with zipfile.ZipFile(target_epub, 'r') as z:
                 z.extractall(temp_dir)
                 
-            # 地毯式尋找原書封面並無損覆蓋
+            # 地毯式尋找原書內部的封面檔案並二進位覆蓋
             for root, dirs, files in os.walk(temp_dir):
                 for file in files:
                     f_lower = file.lower()
@@ -61,11 +53,11 @@ jobs:
                         if any(k in f_lower for k in ['cover', 'bookcover', 'front', 'bg', 'thumb']):
                             target_img_path = os.path.join(root, file)
                             shutil.copy2(user_image, target_img_path)
-                            print(f'➡️ 已用您的原始圖片無損覆蓋封面: {file}')
+                            print(f'➡️ 已在結構內成功無損替換封面原始檔案: {file}')
                             
-            # 重新封裝回高相容性標準 EPUB
-            os.remove(v_epub)
-            with zipfile.ZipFile(v_epub, 'w', zipfile.ZIP_DEFLATED) as z_out:
+            # 重新打包成覆蓋好新封面的橫排 EPUB
+            os.remove(target_epub)
+            with zipfile.ZipFile(target_epub, 'w', zipfile.ZIP_DEFLATED) as z_out:
                 m_path = os.path.join(temp_dir, 'mimetype')
                 if os.path.exists(m_path):
                     z_out.write(m_path, 'mimetype', compress_type=zipfile.ZIP_STORED)
@@ -75,8 +67,16 @@ jobs:
                         an = os.path.relpath(fp, temp_dir)
                         if an != 'mimetype': z_out.write(fp, an)
             shutil.rmtree(temp_dir)
-            print('🎉 原始套件直排與原圖封面替換成功！')
+            print('🎉 原始橫排書之封面原圖替換成功，準備交由開源大腦轉直排！')
         "
+
+        # 2. 呼叫開源大腦：此時書籍內部的封面已經換新，直接轉直排即可完美封裝
+        for f in books/*.epub; do
+          if [[ "$f" != *"-vertical.epub" ]]; then
+            echo "正在以最初完美引號模式進行直排編碼: $f"
+            epubhv "$f"
+          fi
+        done
 
     - name: 5. Upload Result (萬能搜刮下載路徑)
       uses: actions/upload-artifact@v4
