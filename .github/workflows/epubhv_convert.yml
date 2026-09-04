@@ -17,7 +17,7 @@ jobs:
       with:
         python-version: '3.10'
 
-    - name: 3. Core Processing (Pure Vertical Layout & Original Image Replacement)
+    - name: 3. Core Processing (Original Vertical Layout & Original Image Replacement)
       run: |
         python -c "
         import os, zipfile, re, shutil
@@ -43,7 +43,7 @@ jobs:
         with zipfile.ZipFile(user_epub, 'r') as z:
             z.extractall(temp_dir)
             
-        # 3. 處理翻頁、CSS 直排，並執行引號強制校正
+        # 3. 採用最原始成功的直排設定：完全不更動任何標點符號字元，僅修改翻頁方向與注入 CSS
         for root, dirs, files in os.walk(temp_dir):
             for file in files:
                 # 修改翻頁方向為由右至左 (RTL)
@@ -54,24 +54,13 @@ jobs:
                         content = re.sub(r'<spine([^>]*)>', r'<spine\1 page-progression-direction=\"rtl\">', content)
                         with open(p, 'w', encoding='utf-8') as f: f.write(content)
                 
-                # 【引號精準校正機制】
-                # 地毯式搜索所有內文，強制把被誤認的雙引號全數校正回單引號
-                if file.lower().endswith(('.html', '.xhtml', '.htm')):
-                    p = os.path.join(root, file)
-                    with open(p, 'r', encoding='utf-8', errors='ignore') as f: content = f.read()
-                    
-                    # 將所有錯誤跑出來的雙引號『』強行修正回標準的單引號「」
-                    content = content.replace('『', '「').replace('』', '」')
-                    
-                    with open(p, 'w', encoding='utf-8') as f: f.write(content)
-                
-                # 注入直排控制樣式
+                # 注入最原始成功的直排樣式，讓閱讀器自行完美轉正標點符號
                 if file.lower().endswith('.css'):
                     p = os.path.join(root, file)
                     with open(p, 'a', encoding='utf-8') as f:
                         f.write('\n\nhtml {\n  writing-mode: vertical-rl;\n  -webkit-writing-mode: vertical-rl;\n  -epub-writing-mode: vertical-rl;\n}\n')
 
-        # 4. 【核心控制】如果使用者有給新圖片，採取「0位元變更、二進位原圖強行替代」
+        # 4. 加上書封程式碼：採取「0位元變更、二進位原圖強行替代」
         if user_image:
             print(f'🖼️ 偵測到使用者上傳了新封面圖片: {user_image}，開始執行不更動原圖的覆蓋程序...')
             for root, dirs, files in os.walk(temp_dir):
@@ -98,7 +87,7 @@ jobs:
                     if an != 'mimetype': z_out.write(fp, an)
                     
         shutil.rmtree(temp_dir)
-        print('🎉 純文字直排排版與原圖封面替換無損封裝成功！')
+        print('🎉 最原始直排邏輯與原圖封面替換無損封裝成功！')
         "
 
     - name: 4. Upload Result
