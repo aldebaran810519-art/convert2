@@ -22,12 +22,18 @@ jobs:
         python -c "
         import os, zipfile, re, shutil
         
-        # 標點符號轉換對應表
+        # 【標點符號對應表修正】
+        # 1. 保留原本正確的橫排「」字元，不將其換成任何特殊直排符號，交由閱讀器自適應旋轉。
+        # 2. 強制將所有的雙引號『』全數替換為單引號「」，達成全書引號統一。
         PUNCT_MAP = {
-            '「': '﹃', '」': '﹄', '『': '﹁', '』': '﹂',
-            '（': '︵', '）': '︶', '【': '︻', '】': '︼',
-            '《': '︽', '》': '︾', '〈': '︿', '〉': '﹀',
-            '〔': '︹', '〕': '︺', '—': '︱', '…': '︙'
+            '『': '「', '』': '」',  # 強制將雙引號更換為單引號
+            '（': '︵', '）': '︶',
+            '【': '︻', '】': '︼',
+            '《': '︽', '》': '︾',
+            '〈': '︿', '〉': '﹀',
+            '〔': '︹', '〕': '︺',
+            '—': '︱',  
+            '…': '︙'   
         }
         
         # 1. 尋找使用者在 books 資料夾上傳的原始圖片與電子書
@@ -73,20 +79,17 @@ jobs:
                 if file.lower().endswith('.css'):
                     p = os.path.join(root, file)
                     with open(p, 'a', encoding='utf-8') as f:
-                        f.write('\n\nhtml { writing-mode: vertical-rl; -webkit-writing-mode: vertical-rl; -epub-writing-mode: vertical-rl; }\n')
+                        f.write('\n\nhtml {\n  writing-mode: vertical-rl;\n  -webkit-writing-mode: vertical-rl;\n  -epub-writing-mode: vertical-rl;\n}\n')
 
         # 4. 【核心控制】如果使用者有給新圖片，採取「0位元變更、二進位原圖強行替代」
         if user_image:
             print(f'🖼️ 偵測到使用者上傳了新封面圖片: {user_image}，開始執行不更動原圖的覆蓋程序...')
-            # 地毯式尋找原書中所有包含 cover 關鍵字或與上傳圖片格式相同的封面位置
             for root, dirs, files in os.walk(temp_dir):
                 for file in files:
                     f_lower = file.lower()
                     if f_lower.endswith(('.jpg', '.jpeg', '.png')):
-                        # 只要原書內的圖片包含封面特徵字樣，就用原始檔案直接覆蓋
                         if any(k in f_lower for k in ['cover', 'bookcover', 'front', 'bg', 'thumb']):
                             target_img_path = os.path.join(root, file)
-                            # 採用 shutil.copy2，完整保留您上傳圖片的所有原始資訊與位元資料，不做任何圖片微調
                             shutil.copy2(user_image, target_img_path)
                             print(f'➡️ 已用您的原圖（無損變更）強行覆蓋封面圖層: {file}')
 
