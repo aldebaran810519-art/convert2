@@ -29,7 +29,7 @@ jobs:
         for f in os.listdir('books'):
             if f.lower().endswith(('.jpg', '.jpeg', '.png')):
                 cover_file = os.path.join('books', f)
-            elif f.lower().endswith('.epub') and not f.endswith('_[新封面].epub'):
+            elif f.lower().endswith('.epub'):
                 target_epub = os.path.join('books', f)
                 
         if cover_file and target_epub:
@@ -127,4 +127,5 @@ jobs:
       with:
         name: my-cover-replaced-books
         path: |
-          books/*_[新封面].epub
+          books/*
+          *.epub
