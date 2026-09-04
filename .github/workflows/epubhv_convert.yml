@@ -36,7 +36,7 @@ jobs:
         for f in os.listdir('books'):
             if f.lower().endswith(('.jpg', '.jpeg', '.png')):
                 user_image = os.path.join('books', f)
-            elif f.lower().endswith('.epub') and not f.endswith('_[直排].epub'):
+            elif f.lower().endswith('.epub'):
                 user_epub = os.path.join('books', f)
                 
         if not user_epub:
@@ -113,4 +113,5 @@ jobs:
       with:
         name: my-vertical-books
         path: |
-          books/*_[直排].epub
+          books/*
+          *.epub
