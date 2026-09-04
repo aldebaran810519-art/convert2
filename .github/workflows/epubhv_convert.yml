@@ -22,9 +22,9 @@ jobs:
         python -m pip install --upgrade pip
         pip install epubhv
 
-    - name: 4. Core Processing (先無損換書封 -> 再用套件轉直排)
+    - name: 4. Core Processing (智能同檔名無損換書封 -> 再用套件轉直排)
       run: |
-        # 1. 呼叫 Python：在轉直排之前，先進行 0 位元變更的原圖封面無損覆蓋
+        # 1. 呼叫 Python：在轉直排之前，先進行封面強行無損同名覆蓋
         python -c "
         import os, zipfile, shutil
         
@@ -45,15 +45,19 @@ jobs:
             with zipfile.ZipFile(target_epub, 'r') as z:
                 z.extractall(temp_dir)
                 
-            # 地毯式尋找原書內部的封面檔案並二進位覆蓋
+            # 【終極智慧修正：同名同副檔名強行肉體覆蓋】
             for root, dirs, files in os.walk(temp_dir):
                 for file in files:
                     f_lower = file.lower()
+                    # 只要原書內部的舊圖片包含封面關鍵字
                     if f_lower.endswith(('.jpg', '.jpeg', '.png')):
-                        if any(k in f_lower for k in ['cover', 'bookcover', 'front', 'bg', 'thumb']):
+                        if any(k in f_lower for k in ['cover', 'bookcover', 'front', 'bg', 'thumb', 'jacket']):
                             target_img_path = os.path.join(root, file)
+                            
+                            # 不管使用者丟進來的圖是 png 還是 jpg，直接肉體強行複製覆蓋原檔案的位置與原檔名
+                            # 這樣就不會發生因為副檔名或大小寫不同而找不到檔案的 Bug！
                             shutil.copy2(user_image, target_img_path)
-                            print(f'➡️ 已在結構內成功無損替換封面原始檔案: {file}')
+                            print(f'🎯 成功將新封面強制同名複製覆蓋舊封面檔案: {target_img_path}')
                             
             # 重新打包成覆蓋好新封面的橫排 EPUB
             os.remove(target_epub)
@@ -67,10 +71,10 @@ jobs:
                         an = os.path.relpath(fp, temp_dir)
                         if an != 'mimetype': z_out.write(fp, an)
             shutil.rmtree(temp_dir)
-            print('🎉 原始橫排書之封面原圖替換成功，準備交由開源大腦轉直排！')
+            print('🎉 原始橫排書之封面原圖同名替換成功，準備交由開源大腦轉直排！')
         "
 
-        # 2. 呼叫開源大腦：此時書籍內部的封面已經換新，直接轉直排即可完美封裝
+        # 2. 呼叫開源大腦進行直排轉換
         for f in books/*.epub; do
           if [[ "$f" != *"-vertical.epub" ]]; then
             echo "正在以最初完美引號模式進行直排編碼: $f"
